@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # InfraShield — The Living Security Blueprint
 **Dev Sprint '26 Hackathon Submission**
 
@@ -207,3 +208,7 @@ All 18 tests pass with 100% coverage across policies, gate states, scanner execu
 - `test_scanner_with_vulnerable_sample` ✓
 - `test_scanner_with_secure_sample` ✓
 - `test_scanner_rejects_empty_code` ✓
+=======
+# InfraShield
+InfraShield is a Terraform security compliance checker that uses Checkov to detect infrastructure misconfigurations, including public SSH access, exposed cloud storage, and missing encryption. It reports security risks, suggests fixes, and integrates with GitHub Actions to validate configurations before deployment.
+>>>>>>> 6bdfa78232e9296f024e3b41712a9cf0ebff95f6
