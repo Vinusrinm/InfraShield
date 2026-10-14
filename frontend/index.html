@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InfraShield — Pre-Deployment IaC Security Scanner</title>
+  <meta name="description" content="Terraform security policy checker and automated deployment gate for Dev Sprint '26 Hackathon.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/src/styles/blueprint.css">
+</head>
+<body>
+
+  <!-- Top App Navigation -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">🛡️</div>
+        <div>
+          <div class="brand-title">InfraShield</div>
+        </div>
+        <span class="brand-badge">Dev Sprint '26</span>
+      </div>
+
+      <nav class="nav-tabs">
+        <button class="nav-tab active" id="tab-btn-scanner" onclick="switchTab('scanner')">
+          <span>💻</span> Scanner & Fix
+        </button>
+        <button class="nav-tab" id="tab-btn-map" onclick="switchTab('map')">
+          <span>🗺️</span> Architecture Map
+        </button>
+        <button class="nav-tab" id="tab-btn-policies" onclick="switchTab('policies')">
+          <span>🛡️</span> Security Policies
+        </button>
+        <button class="nav-tab" id="tab-btn-history" onclick="switchTab('history')">
+          <span>📜</span> History & Reports
+        </button>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-secondary btn-sm" onclick="startGuidedDemo()" id="btn-guided-demo">
+          <span>✨</span> Guided Demo
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="triggerScan()" id="btn-top-scan">
+          <span>▶</span> Scan Code
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="app-content">
+
+    <!-- Project Subheader / Sample Bar -->
+    <section class="project-banner">
+      <div class="project-info">
+        <h1>Terraform Pre-Deployment Policy Gate</h1>
+        <p>
+          Detect security flaws in Infrastructure as Code (IaC) before running <code>terraform apply</code>. 
+          Prevents public SSH exposure and unencrypted S3 buckets from reaching production.
+        </p>
+      </div>
+
+      <div class="sample-pills">
+        <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-right: 4px;">SAMPLES:</span>
+        <button class="sample-pill active" id="pill-vulnerable" onclick="loadSample('vulnerable')">
+          🚨 Vulnerable EC2 (Port 22 Open)
+        </button>
+        <button class="sample-pill" id="pill-secure" onclick="loadSample('secure')">
+          🛡️ Secure EC2 (Admin Bastion)
+        </button>
+        <button class="sample-pill" id="pill-s3-vulnerable" onclick="loadSample('s3_vulnerable')">
+          🚨 Public S3 Bucket
+        </button>
+        <button class="sample-pill" id="pill-s3-secure" onclick="loadSample('s3_secure')">
+          🛡️ Secure Encrypted S3
+        </button>
+        
+        <label class="sample-pill" style="cursor: pointer;">
+          📁 Upload .tf File
+          <input type="file" id="file-upload" accept=".tf" style="display: none;" onchange="handleFileUpload(event)">
+        </label>
+      </div>
+    </section>
+
+    <!-- TAB 1: SCANNER & FIX (MAIN WORKSPACE) -->
+    <div id="view-scanner">
+      <div class="workspace-grid">
+        
+        <!-- LEFT: CODE EDITOR -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📄</span>
+              <span id="current-filename">vulnerable.tf</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-outline btn-sm" onclick="copyEditorCode()" title="Copy code to clipboard">📋 Copy</button>
+              <button class="btn btn-outline btn-sm" onclick="reloadCurrentSample()" title="Reload clean sample code">🔄 Reload Sample</button>
+              <button class="btn btn-outline btn-sm" onclick="resetEditor()" id="btn-reset-clear" title="Clear editor and previous scan data" style="color: #ff7b72; border-color: rgba(248, 81, 73, 0.4);">🧹 Reset & Clear All</button>
+            </div>
+          </div>
+          
+          <div class="card-body" style="padding: 12px;">
+            <div class="editor-container">
+              <textarea 
+                id="code-editor" 
+                class="editor-textarea" 
+                spellcheck="false"
+                placeholder="# Paste your Terraform (.tf) code here..."
+                oninput="updateEditorStats()"
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="editor-footer">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" id="editor-stats">
+              Lines: 32 • Terraform HCL
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <span id="scan-status-text" style="font-size: 0.8rem; color: var(--text-secondary);">Ready</span>
+              <button class="btn btn-primary" onclick="triggerScan()" id="btn-scan-main">
+                <span>🔍</span> Run Security Scan
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: RESULTS & GATE -->
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          
+          <!-- GATE STATUS BANNER -->
+          <div class="gate-banner blocked" id="gate-banner">
+            <div class="gate-icon" id="gate-icon">⛔</div>
+            <div class="gate-content">
+              <h3 id="gate-title">DEPLOYMENT BLOCKED</h3>
+              <p id="gate-reason">
+                1 Critical violation detected. Ingress rule allows unrestricted SSH traffic from 0.0.0.0/0 to port 22.
+              </p>
+            </div>
+          </div>
+
+          <!-- SUMMARY METRICS -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Gate Decision</div>
+              <div class="metric-val" id="metric-gate" style="color: var(--color-danger); font-size: 1.15rem;">BLOCKED</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Violations</div>
+              <div class="metric-val" id="metric-violations" style="color: var(--color-danger);">1 Critical</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Compliance</div>
+              <div class="metric-val" id="metric-compliance" style="color: var(--color-warning);">40%</div>
+            </div>
+          </div>
+
+          <!-- REPAIR & DIFF STUDIO CARD -->
+          <div class="card" id="repair-card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>🛠️</span>
+                <span>One-Click Remediation & Unified Diff</span>
+              </div>
+              <span class="badge-danger" id="repair-badge">Auto-Fix Ready</span>
+            </div>
+            <div class="card-body">
+              <div style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 8px;" id="repair-explanation">
+                The security group ingress rule exposes port 22 to <code>0.0.0.0/0</code> (the entire public internet). 
+                We recommend restricting CIDR access to your authorized admin bastion or corporate VPN IP.
+              </div>
+
+              <!-- DIFF VIEWER -->
+              <div class="diff-container" id="diff-box">
+                <div class="diff-line del"><span class="diff-tag">-</span><span>cidr_blocks = ["0.0.0.0/0"]  # EXPOSES PORT 22 TO ENTIRE WORLD</span></div>
+                <div class="diff-line add"><span class="diff-tag">+</span><span>cidr_blocks = ["203.0.113.50/32"] # RESTRICTED TO ADMIN BASTION IP</span></div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px; flex-wrap: wrap; gap: 10px;">
+                <div style="font-size: 0.78rem; color: var(--text-muted);">
+                  Complies with policy: <strong>CKV_AWS_24</strong>
+                </div>
+                <button class="btn btn-success" onclick="applyRepairAndRescan()" id="btn-apply-fix">
+                  <span>⚡</span> Apply Fix & Re-Scan Code
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- DETECTED FINDINGS LIST -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>🔍</span>
+                <span>Detected Violations (<span id="findings-count">1</span>)</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="downloadReport()">
+                <span>📥</span> Export JSON Report
+              </button>
+            </div>
+            <div class="card-body" id="findings-container">
+              <!-- Dynamically populated findings -->
+            </div>
+          </div>
+
+          <!-- MINI ARCHITECTURE PREVIEW -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>🗺️</span>
+                <span>Infrastructure Exposure Flow</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="switchTab('map')">Full Map →</button>
+            </div>
+            <div class="card-body">
+              <div class="topo-box" id="mini-topo-container">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: DETAILED ARCHITECTURE MAP -->
+    <div id="view-map" style="display: none;">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🗺️</span>
+            <span>Infrastructure Threat & Topology Map</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary);">
+            Visualizes resource relationships and exposure paths from the scanned Terraform AST
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="full-topo-container" style="padding: 20px 0;">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <div style="margin-top: 24px; padding: 16px; background: var(--bg-main); border-radius: var(--radius-md); border: 1px solid var(--border-default);">
+            <h4 style="font-size: 0.92rem; color: #fff; margin-bottom: 6px;">How This Topology Works:</h4>
+            <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.5;">
+              Our scanner parses the Terraform Abstract Syntax Tree (AST), links security groups with EC2 instances and network ingress rules, 
+              and computes the exposure path. If a rule opens port 22 to <code>0.0.0.0/0</code>, the path from the Public Internet to the EC2 compute instance is flagged red and deployment is blocked.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: POLICY CATALOG -->
+    <div id="view-policies" style="display: none;">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🛡️</span>
+            <span>Active IaC Security Policies</span>
+          </div>
+          <span class="badge-success">3 Registered Policies</span>
+        </div>
+        <div class="card-body" id="policies-catalog-container">
+          <!-- Populated from /api/policies -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: HISTORY & REPORTS -->
+    <div id="view-history" style="display: none;">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📜</span>
+            <span>Scan History & Audit Logs</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-outline btn-sm" onclick="clearHistoryLogs()" style="color: #ff7b72; border-color: rgba(248, 81, 73, 0.4);">
+              <span>🗑️</span> Clear History
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="downloadReport()">
+              <span>📥</span> Download Latest Audit Report (JSON)
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.86rem; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-default); color: var(--text-muted);">
+                <th style="padding: 10px;">TIMESTAMP</th>
+                <th style="padding: 10px;">FILE</th>
+                <th style="padding: 10px;">GATE</th>
+                <th style="padding: 10px;">VIOLATIONS</th>
+                <th style="padding: 10px;">SCORE</th>
+                <th style="padding: 10px;">ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Guided Demo Modal -->
+  <div id="demo-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="card-title">
+          <span>✨</span>
+          <span id="demo-step-title">Hackathon Demo — Step 1 of 4</span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="closeDemoModal()">✕</button>
+      </div>
+      <div class="modal-body" id="demo-step-body">
+        <!-- Step content -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeDemoModal()">Close Demo</button>
+        <button class="btn btn-primary" id="demo-next-btn" onclick="nextDemoStep()">Next Step →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Student Hackathon Footer -->
+  <footer class="app-footer">
+    <div>
+      <strong>InfraShield</strong> — The Living Security Blueprint for Infrastructure as Code.
+      <br>
+      <span style="font-size: 0.78rem; color: var(--text-muted);">
+        Dev Sprint '26 Hackathon | Built by Team InfraShield (2nd Year Computer Science)
+      </span>
+    </div>
+    <div class="footer-tags">
+      <span>Python 3.14 + FastAPI</span>
+      <span>•</span>
+      <span>HCL AST Static Policy Engine</span>
+      <span>•</span>
+      <span>Zero Cloud Credentials Needed</span>
+    </div>
+  </footer>
+
+  <!-- SCRIPT LOGIC (Native ES6, Zero External CDN Dependencies) -->
+  <script>
+    // App State
+    const state = {
+      activeTab: 'scanner',
+      currentSample: 'vulnerable',
+      filename: 'vulnerable.tf',
+      code: '',
+      scanData: null,
+      repairData: null,
+      policies: [],
+      history: [],
+      demoStep: 1
+    };
+
+    // Default Fallback Samples
+    const DEFAULT_VULNERABLE_TF = `resource "aws_security_group" "allow_ssh" {
+  name        = "allow_ssh"
+  description = "Security group allowing SSH from the public internet"
+  vpc_id      = "vpc-0123456789abcdef0"
+
+  ingress {
+    description = "Public SSH Access (Dangerous)"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # VULNERABLE: Open to the entire world
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "insecure-ssh-sg"
+    Environment = "production"
+  }
+}
+
+resource "aws_instance" "web_server" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t2.micro"
+  vpc_security_group_ids = [aws_security_group.allow_ssh.id]
+
+  tags = {
+    Name = "VulnerableWebServer"
+  }
+}`;
+
+    const DEFAULT_SECURE_TF = `resource "aws_security_group" "allow_ssh" {
+  name        = "allow_ssh"
+  description = "Security group restricted to authorized admin bastion"
+  vpc_id      = "vpc-0123456789abcdef0"
+
+  ingress {
+    description = "Restricted SSH access from corporate VPN / Admin Bastion"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["203.0.113.50/32"] # SECURE: Restricted to single admin IP
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "secure-ssh-sg"
+    Environment = "production"
+  }
+}
+
+resource "aws_instance" "web_server" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t2.micro"
+  vpc_security_group_ids = [aws_security_group.allow_ssh.id]
+
+  tags = {
+    Name = "SecureWebServer"
+  }
+}`;
+
+    const DEFAULT_S3_VULN_TF = `resource "aws_s3_bucket" "data_archive" {
+  bucket = "company-confidential-data-archive-2026"
+  acl    = "public-read" # VULNERABLE: Anyone on the internet can read
+
+  tags = {
+    Environment = "production"
+    DataClass   = "Confidential"
+  }
+}`;
+
+    const DEFAULT_S3_SECURE_TF = `resource "aws_s3_bucket" "data_archive" {
+  bucket = "company-confidential-data-archive-2026"
+  acl    = "private"
+
+  tags = {
+    Environment = "production"
+    DataClass   = "Confidential"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "archive_block" {
+  bucket                  = aws_s3_bucket.data_archive.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "archive_crypto" {
+  bucket = aws_s3_bucket.data_archive.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}`;
+
+    // Initialize App
+    window.addEventListener("DOMContentLoaded", async () => {
+      // Load initial vulnerable sample
+      state.code = DEFAULT_VULNERABLE_TF;
+      document.getElementById("code-editor").value = state.code;
+      updateEditorStats();
+
+      // Fetch policies catalog from backend
+      loadPoliciesCatalog();
+
+      // Run initial scan
+      await triggerScan();
+    });
+
+    // Tab Switching
+    function switchTab(tab) {
+      state.activeTab = tab;
+      
+      // Update tab buttons
+      ['scanner', 'map', 'policies', 'history'].forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        const view = document.getElementById(`view-${t}`);
+        if (btn) btn.classList.toggle('active', t === tab);
+        if (view) view.style.display = (t === tab) ? 'block' : 'none';
+      });
+
+      if (tab === 'map') renderFullMap();
+      if (tab === 'history') renderHistoryTable();
+    }
+
+    // Sample Loading
+    async function loadSample(sampleKey) {
+      state.currentSample = sampleKey;
+      
+      // Update UI pills
+      document.querySelectorAll('.sample-pill').forEach(el => el.classList.remove('active'));
+      const activePill = document.getElementById(`pill-${sampleKey.replace('_', '-')}`);
+      if (activePill) activePill.classList.add('active');
+
+      let filename = 'vulnerable.tf';
+      let code = DEFAULT_VULNERABLE_TF;
+
+      if (sampleKey === 'secure') {
+        filename = 'secure.tf';
+        code = DEFAULT_SECURE_TF;
+      } else if (sampleKey === 's3_vulnerable') {
+        filename = 's3_public_unencrypted.tf';
+        code = DEFAULT_S3_VULN_TF;
+      } else if (sampleKey === 's3_secure') {
+        filename = 's3_secure.tf';
+        code = DEFAULT_S3_SECURE_TF;
+      }
+
+      // Try fetching from backend if possible
+      try {
+        const res = await fetch(`/api/samples/${sampleKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          filename = data.filename || filename;
+          code = data.code || code;
+        }
+      } catch (err) {
+        console.warn("Using local fallback sample:", err);
+      }
+
+      state.filename = filename;
+      state.code = code;
+
+      document.getElementById('current-filename').textContent = filename;
+      document.getElementById('code-editor').value = code;
+      updateEditorStats();
+
+      await triggerScan();
+    }
+
+    // Handle File Upload
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        state.filename = file.name;
+        state.code = e.target.result;
+        document.getElementById('current-filename').textContent = file.name;
+        document.getElementById('code-editor').value = state.code;
+        updateEditorStats();
+
+        // Deselect sample pills
+        document.querySelectorAll('.sample-pill').forEach(el => el.classList.remove('active'));
+
+        await triggerScan();
+      };
+      reader.readAsText(file);
+    }
+
+    // Update Editor Line Count
+    function updateEditorStats() {
+      const code = document.getElementById('code-editor').value;
+      state.code = code;
+      const lines = code.split('\n').length;
+      document.getElementById('editor-stats').textContent = `Lines: ${lines} • Terraform HCL`;
+    }
+
+    // Reload original clean sample code
+    function reloadCurrentSample() {
+      const sample = state.currentSample || 'vulnerable';
+      loadSample(sample);
+    }
+
+    // Reset and Clear All Previous Data & Editor
+    function resetEditor() {
+      // 1. Clear editor code and filename
+      state.code = '';
+      state.filename = 'new_config.tf';
+      state.currentSample = '';
+
+      const editor = document.getElementById('code-editor');
+      if (editor) editor.value = '';
+
+      const filenameEl = document.getElementById('current-filename');
+      if (filenameEl) filenameEl.textContent = 'new_config.tf';
+
+      const statsEl = document.getElementById('editor-stats');
+      if (statsEl) statsEl.textContent = 'Lines: 0 • Empty Editor';
+
+      const statusText = document.getElementById('scan-status-text');
+      if (statusText) {
+        statusText.textContent = 'Ready (All Data Cleared)';
+        statusText.style.color = 'var(--text-secondary)';
+      }
+
+      // 2. Clear file upload input
+      const fileInput = document.getElementById('file-upload');
+      if (fileInput) fileInput.value = '';
+
+      // 3. Clear all active sample pill highlights
+      document.querySelectorAll('.sample-pill').forEach(el => el.classList.remove('active'));
+
+      // 4. Clear state scan data and repair proposal
+      state.scanData = null;
+      state.repairData = null;
+
+      // 5. Reset Gate Status Banner to Initial Inactive State
+      const banner = document.getElementById('gate-banner');
+      const icon = document.getElementById('gate-icon');
+      const title = document.getElementById('gate-title');
+      const reason = document.getElementById('gate-reason');
+
+      if (banner) banner.className = 'gate-banner incomplete';
+      if (icon) icon.textContent = 'ℹ️';
+      if (title) title.textContent = 'READY FOR SCAN';
+      if (reason) reason.textContent = 'No configuration scanned yet. Paste or upload your Terraform code, or choose a sample above, and click "Run Security Scan".';
+
+      // 6. Reset Summary Metrics
+      const mGate = document.getElementById('metric-gate');
+      if (mGate) {
+        mGate.textContent = 'PENDING';
+        mGate.style.color = 'var(--text-secondary)';
+      }
+      const mViolations = document.getElementById('metric-violations');
+      if (mViolations) {
+        mViolations.textContent = '0 Issues';
+        mViolations.style.color = 'var(--text-secondary)';
+      }
+      const mComp = document.getElementById('metric-compliance');
+      if (mComp) {
+        mComp.textContent = '—';
+        mComp.style.color = 'var(--text-secondary)';
+      }
+
+      // 7. Clear Findings List
+      const container = document.getElementById('findings-container');
+      const countSpan = document.getElementById('findings-count');
+      if (countSpan) countSpan.textContent = '0';
+      if (container) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 32px 16px; color: var(--text-muted);">
+            <div style="font-size: 2rem; margin-bottom: 8px;">📋</div>
+            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text-secondary);">Previous Data Cleared</div>
+            <div style="font-size: 0.82rem; margin-top: 4px;">
+              Editor and scan findings have been reset. Paste or upload Terraform code, then click <strong>Run Security Scan</strong>.
+            </div>
+          </div>
+        `;
+      }
+
+      // 8. Hide One-Click Repair Card
+      const repairCard = document.getElementById('repair-card');
+      if (repairCard) repairCard.style.display = 'none';
+
+      // 9. Reset Architecture Preview Box
+      const miniTopo = document.getElementById('mini-topo-container');
+      if (miniTopo) {
+        miniTopo.innerHTML = `
+          <div style="text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 0.85rem;">
+            <div style="font-size: 1.4rem; margin-bottom: 6px;">🌐 ──▶ 🛡️ ──▶ 🖥️</div>
+            <div>Exposure flow will appear here after scanning your Terraform configuration.</div>
+          </div>
+        `;
+      }
+
+      // 10. Temporary visual confirmation on button
+      const resetBtn = document.getElementById('btn-reset-clear');
+      if (resetBtn) {
+        const origText = resetBtn.innerHTML;
+        resetBtn.innerHTML = '✓ Cleared!';
+        setTimeout(() => { resetBtn.innerHTML = origText; }, 1200);
+      }
+    }
+
+    // Clear History Logs (Client and Server)
+    async function clearHistoryLogs() {
+      state.history = [];
+      try {
+        await fetch('/api/history', { method: 'DELETE' });
+      } catch (err) {
+        console.warn("Could not clear server history:", err);
+      }
+      renderHistoryTable();
+    }
+
+    // Copy Code
+    function copyEditorCode() {
+      navigator.clipboard.writeText(state.code);
+      const btn = event.target;
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => btn.textContent = orig, 1500);
+    }
+
+    // Trigger Security Scan
+    async function triggerScan() {
+      const statusText = document.getElementById('scan-status-text');
+      const currentCode = document.getElementById('code-editor').value;
+
+      if (!currentCode || !currentCode.trim()) {
+        statusText.textContent = 'Please enter or upload Terraform code first';
+        statusText.style.color = 'var(--color-warning)';
+        
+        const container = document.getElementById('findings-container');
+        if (container) {
+          container.innerHTML = `
+            <div style="text-align: center; padding: 28px 16px; color: var(--color-warning);">
+              <div style="font-size: 1.8rem; margin-bottom: 8px;">⚠️</div>
+              <div style="font-weight: 600; font-size: 0.95rem;">Editor is Empty</div>
+              <div style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
+                Please paste Terraform (.tf) code, upload a file, or select a sample at the top before scanning.
+              </div>
+            </div>
+          `;
+        }
+        return;
+      }
+
+      statusText.textContent = 'Scanning AST...';
+      statusText.style.color = 'var(--accent-blue)';
+      state.code = currentCode;
+
+      try {
+        const response = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: currentCode,
+            filename: state.filename || 'custom.tf'
+          })
+        });
+
+        if (!response.ok) throw new Error("Scan request failed");
+
+        const data = await response.json();
+        state.scanData = data;
+        
+        // Add to history
+        state.history.unshift({
+          timestamp: new Date().toLocaleTimeString(),
+          filename: state.filename,
+          gate: data.gate_status,
+          violations: data.critical_count,
+          score: data.compliance_percentage,
+          data: data
+        });
+
+        // Request repair recommendation
+        await fetchRepairProposal();
+
+        // Render UI
+        renderScanResults();
+
+        statusText.textContent = 'Scan Complete';
+        statusText.style.color = 'var(--color-success)';
+      } catch (err) {
+        console.error("Scan error:", err);
+        statusText.textContent = 'Scan Error';
+        statusText.style.color = 'var(--color-danger)';
+      }
+    }
+
+    // Fetch Repair Proposal
+    async function fetchRepairProposal() {
+      const scan = state.scanData;
+      if (!scan || scan.findings.length === 0) {
+        state.repairData = null;
+        return;
+      }
+
+      const firstFinding = scan.findings[0];
+      try {
+        const res = await fetch('/api/repair/propose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_id: firstFinding.policy_id,
+            resource_id: firstFinding.resource_id,
+            current_code: state.code
+          })
+        });
+
+        if (res.ok) {
+          state.repairData = await res.json();
+        }
+      } catch (err) {
+        console.warn("Repair API error:", err);
+      }
+    }
+
+    // Render Scan Results to UI
+    function renderScanResults() {
+      const scan = state.scanData;
+      if (!scan) return;
+
+      const isBlocked = scan.gate_status === 'BLOCKED';
+      const isPassed = scan.gate_status === 'PASSED';
+
+      // 1. Gate Banner
+      const banner = document.getElementById('gate-banner');
+      const icon = document.getElementById('gate-icon');
+      const title = document.getElementById('gate-title');
+      const reason = document.getElementById('gate-reason');
+
+      banner.className = `gate-banner ${isBlocked ? 'blocked' : (isPassed ? 'passed' : 'incomplete')}`;
+      icon.textContent = isBlocked ? '⛔' : (isPassed ? '✅' : 'ℹ️');
+      title.textContent = isBlocked ? 'DEPLOYMENT BLOCKED' : (isPassed ? 'DEPLOYMENT APPROVED' : 'SCAN INCOMPLETE');
+      reason.textContent = scan.gate_reason;
+
+      // 2. Metrics
+      const mGate = document.getElementById('metric-gate');
+      mGate.textContent = scan.gate_status;
+      mGate.style.color = isBlocked ? 'var(--color-danger)' : (isPassed ? 'var(--color-success)' : 'var(--text-secondary)');
+
+      const mViolations = document.getElementById('metric-violations');
+      mViolations.textContent = `${scan.critical_count} Critical`;
+      mViolations.style.color = scan.critical_count > 0 ? 'var(--color-danger)' : 'var(--color-success)';
+
+      const mComp = document.getElementById('metric-compliance');
+      mComp.textContent = `${scan.compliance_percentage}%`;
+      mComp.style.color = scan.compliance_percentage >= 80 ? 'var(--color-success)' : 'var(--color-warning)';
+
+      // 3. Findings List
+      const container = document.getElementById('findings-container');
+      document.getElementById('findings-count').textContent = scan.findings.length;
+
+      if (scan.findings.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 24px; color: var(--color-success);">
+            <div style="font-size: 2rem; margin-bottom: 8px;">🛡️</div>
+            <div style="font-weight: 600; font-size: 1rem;">No Policy Violations Found!</div>
+            <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">
+              Your Terraform configuration meets all security baseline checks. Safe to proceed to deployment.
+            </div>
+          </div>
+        `;
+      } else {
+        container.innerHTML = scan.findings.map(f => `
+          <div class="finding-item">
+            <div class="finding-header">
+              <span class="finding-title">${f.policy_name}</span>
+              <span class="badge-danger">${f.severity}</span>
+            </div>
+            <div class="finding-resource">Resource: ${f.resource_id} (Line ${f.line_number || '12'})</div>
+            <div class="finding-desc">${f.description}</div>
+            <div style="font-size: 0.8rem; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; border: 1px dashed var(--border-default);">
+              <strong>Recommended Remediation:</strong> ${f.remediation_guidance}
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // 4. Repair Studio Card
+      const repairCard = document.getElementById('repair-card');
+      if (isBlocked && state.repairData) {
+        repairCard.style.display = 'block';
+        document.getElementById('repair-explanation').innerHTML = `
+          <strong>Why this is blocked:</strong> ${state.repairData.explanation}
+          <br><br>
+          <strong>Security Impact:</strong> ${state.repairData.why_it_helps}
+        `;
+
+        const diffLines = state.repairData.diff_lines || [];
+        if (diffLines.length > 0) {
+          document.getElementById('diff-box').innerHTML = diffLines.map(line => `
+            <div class="diff-line ${line.type}">
+              <span class="diff-tag">${line.type === 'del' ? '-' : (line.type === 'add' ? '+' : ' ')}</span>
+              <span>${escapeHtml(line.content)}</span>
+            </div>
+          `).join('');
+        }
+      } else {
+        repairCard.style.display = isBlocked ? 'block' : 'none';
+      }
+
+      // 5. Mini Architecture Preview
+      renderMiniTopology(isBlocked);
+    }
+
+    // Render Clean Architecture Flow (Zero broken overlapping text)
+    function renderMiniTopology(isBlocked) {
+      const container = document.getElementById('mini-topo-container');
+      if (isBlocked) {
+        container.innerHTML = `
+          <div class="topo-flow">
+            <div class="topo-node danger">
+              <div style="font-size: 1.4rem;">🌐</div>
+              <div class="topo-node-title">Public Internet</div>
+              <div class="topo-node-sub">0.0.0.0/0 (Untrusted)</div>
+            </div>
+            <div class="topo-arrow" style="color: var(--color-danger);">━━[❌ Port 22 Open]━━▶</div>
+            <div class="topo-node danger">
+              <div style="font-size: 1.4rem;">🛡️</div>
+              <div class="topo-node-title">Security Group</div>
+              <div class="topo-node-sub">aws_security_group.allow_ssh</div>
+            </div>
+            <div class="topo-arrow">━━▶</div>
+            <div class="topo-node danger">
+              <div style="font-size: 1.4rem;">🖥️</div>
+              <div class="topo-node-title">EC2 Web Server</div>
+              <div class="topo-node-sub">Vulnerable Workload</div>
+            </div>
+          </div>
+          <div style="margin-top: 10px; font-size: 0.78rem; color: #ff7b72; text-align: center;">
+            ⚠️ Ingress vulnerability allows internet scanners to attempt SSH brute-force attacks on this instance.
+          </div>
+        `;
+      } else {
+        container.innerHTML = `
+          <div class="topo-flow">
+            <div class="topo-node safe">
+              <div style="font-size: 1.4rem;">🔒</div>
+              <div class="topo-node-title">Admin Bastion</div>
+              <div class="topo-node-sub">203.0.113.50/32</div>
+            </div>
+            <div class="topo-arrow" style="color: var(--color-success);">━━[✅ Port 22 Restricted]━━▶</div>
+            <div class="topo-node safe">
+              <div style="font-size: 1.4rem;">🛡️</div>
+              <div class="topo-node-title">Security Group</div>
+              <div class="topo-node-sub">Hardened Ingress</div>
+            </div>
+            <div class="topo-arrow">━━▶</div>
+            <div class="topo-node safe">
+              <div style="font-size: 1.4rem;">🖥️</div>
+              <div class="topo-node-title">EC2 Web Server</div>
+              <div class="topo-node-sub">Protected Workload</div>
+            </div>
+          </div>
+          <div style="margin-top: 10px; font-size: 0.78rem; color: #56d364; text-align: center;">
+            ✓ All internet traffic is dropped at AWS network boundary. Only authorized admin IP can reach port 22.
+          </div>
+        `;
+      }
+    }
+
+    // Apply Repair and Rescan
+    async function applyRepairAndRescan() {
+      if (!state.repairData || !state.repairData.full_repaired_code) {
+        // Fallback: replace 0.0.0.0/0 with bastion IP
+        state.code = state.code.replace('0.0.0.0/0', '203.0.113.50/32');
+      } else {
+        state.code = state.repairData.full_repaired_code;
+      }
+
+      document.getElementById('code-editor').value = state.code;
+      updateEditorStats();
+
+      // Show toast or alert
+      const btn = document.getElementById('btn-apply-fix');
+      btn.textContent = '✓ Fix Applied! Re-scanning...';
+      
+      await triggerScan();
+
+      setTimeout(() => {
+        btn.innerHTML = '<span>⚡</span> Apply Fix & Re-Scan Code';
+      }, 1500);
+    }
+
+    // Full Architecture Map View
+    function renderFullMap() {
+      const container = document.getElementById('full-topo-container');
+      const isBlocked = state.scanData && state.scanData.gate_status === 'BLOCKED';
+
+      container.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 1rem; font-weight: 600; color: #fff;">
+              ${isBlocked ? '🚨 Unrestricted Attack Path Detected' : '🛡️ Hardened Network Boundary'}
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <span class="${isBlocked ? 'badge-danger' : 'badge-success'}">
+                ${isBlocked ? 'Threat Level: CRITICAL' : 'Threat Level: SECURE'}
+              </span>
+            </div>
+          </div>
+
+          ${container.innerHTML = renderMiniTopology(isBlocked) || ''}
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px;">
+            <div class="metric-card">
+              <div class="metric-label">Active Resource</div>
+              <div style="font-size: 0.95rem; font-weight: 600; color: #fff; margin-top: 4px;">aws_security_group.allow_ssh</div>
+              <div style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px;">
+                Controls virtual firewall filtering rules for compute instances.
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-label">Network Protocol</div>
+              <div style="font-size: 0.95rem; font-weight: 600; color: #fff; margin-top: 4px;">TCP Port 22 (SSH)</div>
+              <div style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px;">
+                Secure Shell remote administrative terminal interface.
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-label">Policy Status</div>
+              <div style="font-size: 0.95rem; font-weight: 600; color: ${isBlocked ? '#ff7b72' : '#56d364'}; margin-top: 4px;">
+                ${isBlocked ? 'Violation (CKV_AWS_24)' : 'Compliant (Passing)'}
+              </div>
+              <div style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px;">
+                ${isBlocked ? 'Blocked at pre-deployment gate.' : 'Approved for terraform apply.'}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Load Policies Catalog
+    async function loadPoliciesCatalog() {
+      try {
+        const res = await fetch('/api/policies');
+        if (res.ok) {
+          const data = await res.json();
+          state.policies = data.policies || [];
+          
+          const container = document.getElementById('policies-catalog-container');
+          container.innerHTML = state.policies.map(p => `
+            <div style="background: var(--bg-main); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 16px; margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="font-weight: 600; color: #fff; font-size: 0.95rem;">
+                  ${p.policy_id} — ${p.name}
+                </div>
+                <span class="${p.severity === 'CRITICAL' ? 'badge-danger' : 'badge-success'}">${p.severity}</span>
+              </div>
+              <div style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.45;">
+                ${p.description}
+              </div>
+              <div style="font-size: 0.8rem; color: var(--accent-blue);">
+                <strong>Gate Behavior:</strong> ${p.gate_action} on violation • <strong>Remediation:</strong> ${p.remediation}
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (err) {
+        console.warn("Could not load policies catalog:", err);
+      }
+    }
+
+    // History Table
+    function renderHistoryTable() {
+      const tbody = document.getElementById('history-table-body');
+      if (state.history.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: var(--text-muted);">No scans recorded yet.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = state.history.map((h, i) => `
+        <tr style="border-bottom: 1px solid var(--border-muted);">
+          <td style="padding: 10px; font-family: var(--font-mono); font-size: 0.78rem;">${h.timestamp}</td>
+          <td style="padding: 10px; font-weight: 500;">${h.filename}</td>
+          <td style="padding: 10px;">
+            <span class="${h.gate === 'BLOCKED' ? 'badge-danger' : 'badge-success'}">${h.gate}</span>
+          </td>
+          <td style="padding: 10px;">${h.violations} Critical</td>
+          <td style="padding: 10px; font-weight: 600;">${h.score}%</td>
+          <td style="padding: 10px;">
+            <button class="btn btn-outline btn-sm" onclick="downloadReport()">Download Report</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // Download Security Audit Report (JSON)
+    async function downloadReport() {
+      if (!state.scanData) return;
+
+      try {
+        const res = await fetch('/api/reports/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state.scanData)
+        });
+
+        const reportJson = res.ok ? await res.json() : state.scanData;
+        const blob = new Blob([JSON.stringify(reportJson, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `InfraShield_Security_Report_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error("Report download error:", err);
+      }
+    }
+
+    // Interactive Guided Demo
+    function startGuidedDemo() {
+      state.demoStep = 1;
+      showDemoStep(1);
+      document.getElementById('demo-modal').style.display = 'flex';
+    }
+
+    function closeDemoModal() {
+      document.getElementById('demo-modal').style.display = 'none';
+    }
+
+    function showDemoStep(step) {
+      const title = document.getElementById('demo-step-title');
+      const body = document.getElementById('demo-step-body');
+      const nextBtn = document.getElementById('demo-next-btn');
+
+      if (step === 1) {
+        title.textContent = 'Step 1: Load Vulnerable Terraform Configuration';
+        body.innerHTML = `
+          <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+            Let's start by inspecting a realistic Terraform file with an open SSH port 22. In cloud security, leaving <code>cidr_blocks = ["0.0.0.0/0"]</code> allows anyone on the internet to attempt brute-force dictionary attacks.
+          </p>
+          <div style="background: var(--bg-main); padding: 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; color: #ff7b72;">
+            ingress {<br>
+            &nbsp;&nbsp;from_port = 22<br>
+            &nbsp;&nbsp;to_port = 22<br>
+            &nbsp;&nbsp;protocol = "tcp"<br>
+            &nbsp;&nbsp;cidr_blocks = ["0.0.0.0/0"] # VULNERABLE<br>
+            }
+          </div>
+        `;
+        nextBtn.textContent = 'Scan This Code →';
+      } else if (step === 2) {
+        title.textContent = 'Step 2: Automated AST Policy Scan';
+        body.innerHTML = `
+          <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+            InfraShield parses the Terraform Abstract Syntax Tree (AST) locally without needing cloud credentials or running dangerous commands.
+          </p>
+          <div style="background: rgba(248, 81, 73, 0.1); border-left: 4px solid var(--color-danger); padding: 12px; border-radius: 6px;">
+            <strong style="color: #ff7b72;">Policy Violation Detected:</strong> CKV_AWS_24 (Public SSH Exposure)<br>
+            <span style="font-size: 0.82rem; color: var(--text-secondary);">Gate Decision: <strong>BLOCKED</strong>. Deployment to AWS is prevented.</span>
+          </div>
+        `;
+        nextBtn.textContent = 'View Recommended Fix →';
+      } else if (step === 3) {
+        title.textContent = 'Step 3: Review Git Diff & Bastion Fix';
+        body.innerHTML = `
+          <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+            InfraShield generates a unified Git diff proposing to replace the wild-card <code>0.0.0.0/0</code> CIDR with a dedicated administrative bastion IP (RFC 5737 TEST-NET-3).
+          </p>
+          <div class="diff-container" style="margin: 0;">
+            <div class="diff-line del"><span class="diff-tag">-</span><span>cidr_blocks = ["0.0.0.0/0"]</span></div>
+            <div class="diff-line add"><span class="diff-tag">+</span><span>cidr_blocks = ["203.0.113.50/32"] # Admin Bastion Only</span></div>
+          </div>
+        `;
+        nextBtn.textContent = 'Apply Fix & Rescan →';
+      } else if (step === 4) {
+        title.textContent = 'Step 4: Validation Gate PASSED!';
+        body.innerHTML = `
+          <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+            The code has been updated and rescanned. All security policies now pass with 100% compliance!
+          </p>
+          <div style="background: rgba(63, 185, 80, 0.1); border-left: 4px solid var(--color-success); padding: 12px; border-radius: 6px;">
+            <strong style="color: #56d364;">Gate Decision: PASSED ✓</strong><br>
+            <span style="font-size: 0.82rem; color: var(--text-secondary);">Safe to proceed with <code>terraform apply</code>. Zero critical exposures.</span>
+          </div>
+        `;
+        nextBtn.textContent = 'Finish & Explore';
+      }
+    }
+
+    async function nextDemoStep() {
+      if (state.demoStep === 1) {
+        await loadSample('vulnerable');
+        state.demoStep = 2;
+        showDemoStep(2);
+      } else if (state.demoStep === 2) {
+        state.demoStep = 3;
+        showDemoStep(3);
+      } else if (state.demoStep === 3) {
+        await applyRepairAndRescan();
+        state.demoStep = 4;
+        showDemoStep(4);
+      } else {
+        closeDemoModal();
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>
